@@ -760,8 +760,17 @@ async def register(headless=True, auto_login=True, skip_onboard=True,
                 await _human_type(page, email_input, email)
                 await _human_delay(0.8, 1.5)
                 log(f"邮箱已填入: {email}")
-                await _click_submit(page)
-                await page.wait_for_load_state("networkidle")
+                await page.evaluate("""() => {
+                    const buttons = Array.from(document.querySelectorAll('button'));
+                    const visible = buttons.filter(b => b.offsetWidth > 0 && b.offsetHeight > 0);
+                    for (const b of visible) {
+                        const t = (b.innerText || '').toLowerCase();
+                        if (t.includes('continue') || t.includes('next') || t.includes('submit') || t.includes('verify')) {
+                            b.click(); return;
+                        }
+                    }
+                    if (visible.length > 0) visible[visible.length - 1].click();
+                }""")
                 await _human_delay(2, 4)
 
             # 等待 profile.aws
@@ -849,8 +858,8 @@ async def register(headless=True, auto_login=True, skip_onboard=True,
                     return "EMAIL"
                 if "awsapps.com" in result["url"] and result["hasConsentBtn"]:
                     return "CONSENT"
-                if "profile.aws" in result["url"] and not result["isLoading"]:
-                    return "OTP"
+                if "profile.aws" in result["url"]:
+                    return "LOADING"
                 if result["isLoading"]:
                     return "LOADING"
                 return "UNKNOWN"
@@ -858,6 +867,8 @@ async def register(headless=True, auto_login=True, skip_onboard=True,
             async def wait_for_state(target_states, timeout=60):
                 deadline = time.time() + timeout
                 while time.time() < deadline:
+                    if cancel_check and cancel_check():
+                        return "CANCELLED"
                     st = await detect_state()
                     if st in target_states or st == "DONE":
                         return st
@@ -872,6 +883,10 @@ async def register(headless=True, auto_login=True, skip_onboard=True,
             await _dismiss_cookie(page)
 
             state = await wait_for_state(["NAME", "OTP", "PASSWORD", "CONSENT", "DONE"], timeout=30)
+            if state == "CANCELLED":
+                await browser.close()
+                callback_server.shutdown()
+                return _partial_result("用户取消")
             if state == "NAME":
                 name_field = page.locator('xpath=//input[contains(@placeholder,"Silva")]')
                 for attempt in range(3):
@@ -888,20 +903,25 @@ async def register(headless=True, auto_login=True, skip_onboard=True,
                 for attempt in range(3):
                     clicked = False
                     try:
-                        for sel in [
-                            'xpath=//form//button[@type="submit"]',
-                            'xpath=//button[contains(text(),"Continue")]',
-                            'xpath=//button[@type="submit"]',
-                        ]:
-                            btn = page.locator(sel)
-                            if await btn.count() > 0 and await btn.first.is_visible():
-                                await btn.first.click()
-                                clicked = True
-                                break
-                        if not clicked:
-                            await page.keyboard.press("Enter")
+                        await page.evaluate("""() => {
+                            const buttons = Array.from(document.querySelectorAll('button'));
+                            const visible = buttons.filter(b => b.offsetWidth > 0 && b.offsetHeight > 0);
+                            for (const b of visible) {
+                                const t = (b.innerText || '').toLowerCase();
+                                if (t.includes('continue') || t.includes('next') || t.includes('submit') || t.includes('verify')) {
+                                    b.click(); return;
+                                }
+                            }
+                            if (visible.length > 0) visible[visible.length - 1].click();
+                        }""")
+                        clicked = True
                     except Exception:
                         pass
+                    if not clicked:
+                        try:
+                            await page.keyboard.press("Enter")
+                        except Exception:
+                            pass
                     await asyncio.sleep(4)
                     new_state = await detect_state()
                     if new_state != "NAME":
@@ -913,6 +933,10 @@ async def register(headless=True, auto_login=True, skip_onboard=True,
             if state not in ["DONE", "PASSWORD", "CONSENT", "CALLBACK"]:
                 state = await wait_for_state(["OTP", "PASSWORD", "CONSENT", "DONE"], timeout=30)
 
+            if state == "CANCELLED":
+                await browser.close()
+                callback_server.shutdown()
+                return _partial_result("用户取消")
             if state == "OTP":
                 log("阶段 4: OTP 验证")
                 # 等待 profile.aws 页面 React 渲染完成
@@ -979,7 +1003,17 @@ async def register(headless=True, auto_login=True, skip_onboard=True,
                     return _partial_result("OTP输入框未找到")
 
                 log(f"已找到 OTP 输入框, 等待验证码 ({mail.__class__.__name__})...", "ok")
-                otp_code = mail.wait_otp(timeout=90, poll_interval=3)
+                otp_code = ""
+                otp_deadline = time.time() + 90
+                while time.time() < otp_deadline:
+                    if cancel_check and cancel_check():
+                        log("用户取消", "err")
+                        await browser.close()
+                        callback_server.shutdown()
+                        return _partial_result("用户取消")
+                    otp_code = mail.wait_otp(timeout=5, poll_interval=3)
+                    if otp_code:
+                        break
                 if not otp_code:
                     log("OTP 等待超时!", "err")
                     await browser.close()
@@ -1011,15 +1045,19 @@ async def register(headless=True, auto_login=True, skip_onboard=True,
                 # 提交 OTP，TES 可能首次拦截，增加重试间隔和行为模拟
                 for attempt in range(5):
                     try:
-                        submit_btn = page.locator('xpath=//form//button[@type="submit"]')
-                        if await submit_btn.count() > 0 and await submit_btn.first.is_visible():
-                            await _move_to_element(page, submit_btn.first)
-                            await asyncio.sleep(_random.uniform(0.2, 0.5))
-                            await submit_btn.first.click()
-                        else:
-                            await page.keyboard.press("Enter")
+                        await page.evaluate("""() => {
+                            const buttons = Array.from(document.querySelectorAll('button'));
+                            const visible = buttons.filter(b => b.offsetWidth > 0 && b.offsetHeight > 0);
+                            for (const b of visible) {
+                                const t = (b.innerText || '').toLowerCase();
+                                if (t.includes('continue') || t.includes('next') || t.includes('submit') || t.includes('verify')) {
+                                    b.click(); return;
+                                }
+                            }
+                            if (visible.length > 0) visible[visible.length - 1].click();
+                        }""")
                     except Exception:
-                        pass
+                        await page.keyboard.press("Enter")
                     log(f"验证码已提交 ({attempt+1}/5)")
                     # 递增等待：TES 首次拦截后需要更长时间重新评估
                     wait_time = 3 + attempt * 2
@@ -1069,35 +1107,51 @@ async def register(headless=True, auto_login=True, skip_onboard=True,
                     log(f"等待页面过渡 (当前: {state})...", "info")
                     await asyncio.sleep(3)
                 state = await wait_for_state(["PASSWORD", "CONSENT", "DONE", "CALLBACK"], timeout=30)
+                if state == "CANCELLED":
+                    await browser.close()
+                    callback_server.shutdown()
+                    return _partial_result("用户取消")
                 log(f"进入状态: {state}", "info")
 
             if state == "PASSWORD":
                 log("阶段 5: 设置密码")
                 await _human_delay(1.5, 3.0)
-                pwd_inputs = page.locator('xpath=//input[@type="password"]')
+                for _wait in range(10):
+                    count = await page.locator('xpath=//input[@type="password"]').count()
+                    if count >= 2:
+                        break
+                    await asyncio.sleep(1)
                 for attempt in range(3):
                     try:
-                        count = await pwd_inputs.count()
-                        if count < 2 and attempt == 0:
-                            await asyncio.sleep(2)
-                            count = await pwd_inputs.count()
-                        await _move_to_element(page, pwd_inputs.first)
-                        await _human_type(page, pwd_inputs.first, password, min_delay=30, max_delay=90)
-                        await _human_delay(0.5, 1.2)
-                        if count > 1:
-                            await _move_to_element(page, pwd_inputs.nth(1))
-                            await _human_type(page, pwd_inputs.nth(1), password, min_delay=30, max_delay=90)
-                            await _human_delay(0.5, 1.0)
-                        submit_btn = page.locator('xpath=//form//button[@type="submit"]')
-                        if await submit_btn.count() > 0 and await submit_btn.first.is_visible():
-                            await _move_to_element(page, submit_btn.first)
-                            await submit_btn.first.click()
-                        else:
-                            await page.keyboard.press("Enter")
+                        await page.evaluate("""(pwd) => {
+                            const inputs = Array.from(document.querySelectorAll('input[type="password"]'))
+                                .filter(el => el.offsetWidth > 0);
+                            function setVal(el, val) {
+                                const ns = Object.getOwnPropertyDescriptor(
+                                    window.HTMLInputElement.prototype, 'value').set;
+                                ns.call(el, val);
+                                el.dispatchEvent(new Event('input', {bubbles: true}));
+                                el.dispatchEvent(new Event('change', {bubbles: true}));
+                            }
+                            inputs.forEach(el => setVal(el, pwd));
+                        }""", password)
+                        log("密码已填入", "ok")
+                        await asyncio.sleep(0.5)
+                        await page.evaluate("""() => {
+                            const buttons = Array.from(document.querySelectorAll('button'));
+                            const visible = buttons.filter(b => b.offsetWidth > 0 && b.offsetHeight > 0);
+                            for (const b of visible) {
+                                const t = (b.innerText || '').toLowerCase();
+                                if (t.includes('continue') || t.includes('next') || t.includes('submit') || t.includes('verify')) {
+                                    b.click(); return;
+                                }
+                            }
+                            if (visible.length > 0) visible[visible.length - 1].click();
+                        }""")
                     except Exception:
                         await asyncio.sleep(2)
                         continue
-                    await asyncio.sleep(4)
+                    await asyncio.sleep(5)
                     new_state = await detect_state()
                     if new_state != "PASSWORD":
                         log("密码设置完成", "ok")
@@ -1108,6 +1162,10 @@ async def register(headless=True, auto_login=True, skip_onboard=True,
             if state not in ["DONE", "CALLBACK"]:
                 state = await wait_for_state(["CONSENT", "DONE", "CALLBACK"], timeout=45)
 
+            if state == "CANCELLED":
+                await browser.close()
+                callback_server.shutdown()
+                return _partial_result("用户取消")
             if state == "CONSENT":
                 log("阶段 6: 授权同意页")
                 await asyncio.sleep(3)
