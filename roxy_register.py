@@ -466,18 +466,6 @@ async def register_with_roxy(
             await page.route("**/127.0.0.1:3128/**", _intercept_callback)
             await page.route("**/localhost:3128/**", _intercept_callback)
 
-            # 拦截 profile.aws API 响应用于调试
-            async def _on_profile_response(response):
-                url = response.url
-                if "profile.aws" in url and "/api/" in url:
-                    try:
-                        body = await response.text()
-                        endpoint = url.split("/api/")[-1]
-                        log(f"[API] {endpoint} → {response.status} {body[:150]}", "dbg")
-                    except Exception:
-                        pass
-            page.on("response", _on_profile_response)
-
             await page.goto(signin_url, timeout=60000, wait_until="domcontentloaded")
             await asyncio.sleep(3)
             await _dismiss_cookie(page)
@@ -540,7 +528,7 @@ async def register_with_roxy(
                     if authorization_code:
                         log("授权码已通过路由拦截获取", "ok")
                     else:
-                        log(f"authorize 导航: {str(e)[:80]}", "dbg")
+                        log(f"authorize 导航异常: {str(e)[:60]}", "warn")
                 await asyncio.sleep(3)
 
             # 等待到达 signin.aws 或 profile.aws（同时监听迟到的回调）
@@ -569,20 +557,19 @@ async def register_with_roxy(
                     break
                 await asyncio.sleep(2)
             await asyncio.sleep(2)
-            log(f"当前页面: {page.url[:80]}", "dbg")
+            await asyncio.sleep(2)
 
             # 如果在 signin.aws，输入邮箱
             if "signin.aws" in page.url and not authorization_code:
                 await page.wait_for_load_state("domcontentloaded")
-                await asyncio.sleep(3)
-                log(f"signin.aws 页面 URL: {page.url}", "dbg")
+                await asyncio.sleep(2)
 
                 # 可能需要先点击 "Create one" / "Create your AWS Builder ID" 链接
                 create_link = page.locator('xpath=//a[contains(text(),"Create") or contains(text(),"create")]')
                 if await create_link.count() > 0 and await create_link.first.is_visible():
                     await create_link.first.click()
                     log("点击了 Create 链接", "ok")
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)
 
                 # 等待邮箱输入框出现
                 email_input = None
@@ -599,21 +586,20 @@ async def register_with_roxy(
                             break
                     if email_input:
                         break
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(1)
 
                 if not email_input:
-                    log(f"signin.aws 未找到邮箱输入框 (URL: {page.url})", "err")
+                    log(f"signin.aws 未找到邮箱输入框", "err")
                     await browser.close()
                     _cleanup()
                     return _partial_result("signin邮箱输入框未找到")
 
-                await _move_to_element(page, email_input)
-                await _human_type(page, email_input, email)
-                await _human_delay(0.8, 1.5)
+                await email_input.fill(email)
+                await asyncio.sleep(0.5)
                 log(f"邮箱已填入: {email}")
                 await _click_submit(page)
                 await page.wait_for_load_state("networkidle")
-                await _human_delay(2, 4)
+                await asyncio.sleep(2)
 
             # 等待 profile.aws（如果已有授权码则跳过）
             if not authorization_code:
@@ -628,25 +614,6 @@ async def register_with_roxy(
                 await browser.close()
                 _cleanup()
                 return _partial_result("未到达注册页面")
-
-            # PLACEHOLDER_CONTINUE_3
-
-            # 预热行为
-            try:
-                vp = page.viewport_size or {"width": 1280, "height": 800}
-                for _ in range(3):
-                    await page.mouse.move(
-                        _random.randint(100, vp["width"] - 100),
-                        _random.randint(100, vp["height"] - 100),
-                        steps=_random.randint(10, 25)
-                    )
-                    await asyncio.sleep(_random.uniform(0.3, 0.8))
-                await page.mouse.wheel(0, _random.randint(50, 150))
-                await asyncio.sleep(_random.uniform(0.5, 1.0))
-                await page.mouse.wheel(0, -_random.randint(30, 80))
-                await asyncio.sleep(_random.uniform(0.3, 0.6))
-            except Exception:
-                pass
 
             # ─── 状态机 ───────────────────────────────────────────────
             async def detect_state():
@@ -720,7 +687,7 @@ async def register_with_roxy(
 
             # ─── Phase 3: 姓名填写 ────────────────────────────────────
             log("阶段 3: 填写注册表单")
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
             await _dismiss_cookie(page)
 
             state = await wait_for_state(["NAME", "OTP", "PASSWORD", "CONSENT", "DONE"], timeout=30)
@@ -728,9 +695,8 @@ async def register_with_roxy(
                 name_field = page.locator('xpath=//input[contains(@placeholder,"Silva")]')
                 for attempt in range(3):
                     try:
-                        await _move_to_element(page, name_field.first)
-                        await _human_type(page, name_field.first, full_name)
-                        await _human_delay(0.5, 1.0)
+                        await name_field.first.fill(full_name)
+                        await asyncio.sleep(0.3)
                         filled_val = await name_field.first.input_value()
                         if filled_val == full_name:
                             log(f"姓名已填入: '{full_name}'", "ok")
@@ -754,14 +720,13 @@ async def register_with_roxy(
                             await page.keyboard.press("Enter")
                     except Exception:
                         pass
-                    await asyncio.sleep(4)
+                    await asyncio.sleep(3)
                     new_state = await detect_state()
                     if new_state != "NAME":
                         log("姓名已提交", "ok")
                         break
                 state = await detect_state()
 
-            # PLACEHOLDER_CONTINUE_4
 
             # ─── Phase 4: OTP 验证 ────────────────────────────────────
             if state not in ["DONE", "PASSWORD", "CONSENT", "CALLBACK"]:
@@ -821,40 +786,22 @@ async def register_with_roxy(
                     return _partial_result("OTP超时")
 
                 log(f"获取到验证码: {otp_code}", "ok")
-                await _human_delay(2, 4)
-                try:
-                    vp = page.viewport_size or {"width": 1280, "height": 800}
-                    await page.mouse.move(
-                        vp["width"] * _random.uniform(0.3, 0.7),
-                        vp["height"] * _random.uniform(0.3, 0.5),
-                        steps=_random.randint(8, 20)
-                    )
-                    await asyncio.sleep(_random.uniform(0.3, 0.8))
-                except Exception:
-                    pass
-                await _move_to_element(page, otp_input)
-                await otp_input.click()
-                await asyncio.sleep(_random.uniform(0.3, 0.6))
-                for ch in otp_code:
-                    await page.keyboard.type(ch, delay=0)
-                    await asyncio.sleep(_random.uniform(0.05, 0.15))
-                await _human_delay(0.8, 1.5)
+                await asyncio.sleep(1)
+                await otp_input.fill(otp_code)
+                await asyncio.sleep(0.5)
 
-                # 提交 OTP，TES 重试
+                # 提交 OTP
                 for attempt in range(5):
                     try:
                         submit_btn = page.locator('xpath=//form//button[@type="submit"]')
                         if await submit_btn.count() > 0 and await submit_btn.first.is_visible():
-                            await _move_to_element(page, submit_btn.first)
-                            await asyncio.sleep(_random.uniform(0.2, 0.5))
                             await submit_btn.first.click()
                         else:
                             await page.keyboard.press("Enter")
                     except Exception:
                         pass
                     log(f"验证码已提交 ({attempt+1}/5)")
-                    wait_time = 3 + attempt * 2
-                    await asyncio.sleep(wait_time)
+                    await asyncio.sleep(3 + attempt)
                     new_state = await detect_state()
                     if new_state != "OTP":
                         log("OTP 验证通过", "ok")
@@ -870,27 +817,15 @@ async def register_with_roxy(
                             return '';
                         }""")
                         if error_text:
-                            log(f"TES 拦截 ({attempt+1}/5), 重新模拟输入...", "warn")
-                            await page.mouse.move(
-                                _random.randint(200, 800), _random.randint(200, 500),
-                                steps=_random.randint(8, 15)
-                            )
-                            await _human_delay(1.5, 3.0)
-                            await _move_to_element(page, otp_input)
-                            await otp_input.click()
-                            await asyncio.sleep(_random.uniform(0.2, 0.4))
-                            await page.keyboard.press("Control+a")
-                            await asyncio.sleep(_random.uniform(0.1, 0.3))
-                            await page.keyboard.press("Backspace")
-                            await asyncio.sleep(_random.uniform(0.3, 0.6))
-                            for ch in otp_code:
-                                await page.keyboard.type(ch, delay=0)
-                                await asyncio.sleep(_random.uniform(0.06, 0.18))
-                            await _human_delay(0.8, 1.5)
+                            log(f"TES 拦截 ({attempt+1}/5), 重试...", "warn")
+                            await asyncio.sleep(2)
+                            await otp_input.fill("")
+                            await asyncio.sleep(0.3)
+                            await otp_input.fill(otp_code)
+                            await asyncio.sleep(0.5)
                     except Exception:
                         pass
 
-            # PLACEHOLDER_CONTINUE_5
 
             # ─── Phase 5: 密码设置 ────────────────────────────────────
             if state not in ["DONE", "CONSENT", "CALLBACK"]:
@@ -911,7 +846,7 @@ async def register_with_roxy(
                     await asyncio.sleep(1)
                 else:
                     count = await pwd_inputs.count()
-                log(f"检测到 {count} 个密码输入框", "dbg")
+                log(f"检测到 {count} 个密码输入框")
                 for attempt in range(3):
                     try:
                         # 通过 JS 精准定位并填入密码，避免悬浮验证提示遮挡
@@ -934,8 +869,8 @@ async def register_with_roxy(
                             }
                             return inputs.length;
                         }""", password)
-                        log(f"JS 填入 {filled} 个密码框", "dbg")
-                        await _human_delay(0.5, 1.0)
+                        log(f"JS 填入 {filled} 个密码框")
+                        await asyncio.sleep(0.5)
                         submit_btn = page.locator('xpath=//form//button[@type="submit"]')
                         if await submit_btn.count() > 0 and await submit_btn.first.is_visible():
                             await submit_btn.first.click()
@@ -957,37 +892,49 @@ async def register_with_roxy(
 
             if state == "CONSENT":
                 log("阶段 6: 授权同意页")
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
                 for attempt in range(10):
+                    if authorization_code:
+                        break
                     try:
-                        clicked = await page.evaluate("""() => {
-                            const buttons = Array.from(document.querySelectorAll('button'));
-                            const visible = buttons.filter(b => b.offsetWidth > 0 && b.offsetHeight > 0);
-                            for (const b of visible) {
-                                const t = (b.innerText || '').toLowerCase();
-                                if (t.includes('allow') || t.includes('authorize') || t.includes('accept') || t.includes('confirm')) {
-                                    b.click(); return true;
-                                }
-                            }
-                            if (visible.length > 0) { visible[visible.length - 1].click(); return true; }
-                            return false;
-                        }""")
+                        # 用 Playwright 精准点击 Allow/Authorize 按钮
+                        allow_btn = None
+                        for sel in [
+                            'xpath=//button[contains(text(),"Allow")]',
+                            'xpath=//button[contains(text(),"allow")]',
+                            'xpath=//button[contains(text(),"Authorize")]',
+                            'xpath=//button[contains(text(),"Accept")]',
+                            'xpath=//button[contains(text(),"Confirm")]',
+                            'xpath=//input[@type="submit" and contains(@value,"Allow")]',
+                        ]:
+                            loc = page.locator(sel)
+                            if await loc.count() > 0 and await loc.first.is_visible():
+                                allow_btn = loc.first
+                                break
+                        if allow_btn:
+                            await allow_btn.click()
+                            log("已点击 Allow 按钮", "ok")
+                        else:
+                            # fallback: 点击最后一个可见按钮
+                            await page.evaluate("""() => {
+                                const btns = Array.from(document.querySelectorAll('button'))
+                                    .filter(b => b.offsetWidth > 0 && b.offsetHeight > 0);
+                                if (btns.length > 0) btns[btns.length - 1].click();
+                            }""")
+                            log("fallback 点击按钮", "ok")
                     except Exception:
                         log("授权后页面已导航", "ok")
                         state = "CALLBACK"
                         break
-                    if clicked:
-                        log("自动点击授权按钮", "ok")
-                        await asyncio.sleep(4)
-                        try:
-                            new_state = await detect_state()
-                        except Exception:
-                            state = "CALLBACK"
-                            break
-                        if new_state != "CONSENT":
-                            state = new_state
-                            break
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(3)
+                    try:
+                        new_state = await detect_state()
+                    except Exception:
+                        state = "CALLBACK"
+                        break
+                    if new_state != "CONSENT":
+                        state = new_state
+                        break
 
             # 等待回调 code
             log("等待 OAuth 回调...")
