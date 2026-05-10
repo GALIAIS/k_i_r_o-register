@@ -540,16 +540,36 @@ async def register_with_roxy(
                         log(f"authorize 导航: {str(e)[:80]}", "dbg")
                 await asyncio.sleep(3)
 
-            # 等待到达 signin.aws 或 profile.aws
-            for _ in range(10):
+            # 等待到达 signin.aws 或 profile.aws（同时监听迟到的回调）
+            for _wait_nav in range(20):
                 if "signin.aws" in page.url or "profile.aws" in page.url:
+                    break
+                # 如果回调迟到了，立即跳转 authorize
+                if signin_callback_params and not authorization_code:
+                    log("回调迟到，正在跳转授权页面...")
+                    authorize_url = f"{REG_OIDC}/authorize?" + urlencode({
+                        "response_type": "code",
+                        "client_id": client_id,
+                        "redirect_uri": REG_REDIRECT_URI,
+                        "scopes": ",".join(REG_SCOPES),
+                        "state": state_val,
+                        "code_challenge": code_challenge,
+                        "code_challenge_method": "S256",
+                    })
+                    try:
+                        await page.goto(authorize_url, timeout=60000, wait_until="domcontentloaded")
+                    except Exception:
+                        pass
+                    await asyncio.sleep(3)
+                    break
+                if authorization_code:
                     break
                 await asyncio.sleep(2)
             await asyncio.sleep(2)
-            log("已到达注册页面", "ok")
+            log(f"当前页面: {page.url[:80]}", "dbg")
 
             # 如果在 signin.aws，输入邮箱
-            if "signin.aws" in page.url:
+            if "signin.aws" in page.url and not authorization_code:
                 await page.wait_for_load_state("domcontentloaded")
                 await asyncio.sleep(3)
                 log(f"signin.aws 页面 URL: {page.url}", "dbg")
@@ -592,14 +612,15 @@ async def register_with_roxy(
                 await page.wait_for_load_state("networkidle")
                 await _human_delay(2, 4)
 
-            # 等待 profile.aws
-            for _ in range(15):
-                if "profile.aws" in page.url:
-                    break
+            # 等待 profile.aws（如果已有授权码则跳过）
+            if not authorization_code:
+                for _ in range(15):
+                    if "profile.aws" in page.url or authorization_code:
+                        break
+                    await asyncio.sleep(2)
                 await asyncio.sleep(2)
-            await asyncio.sleep(2)
 
-            if "profile.aws" not in page.url:
+            if "profile.aws" not in page.url and not authorization_code:
                 log(f"未能到达注册页面 (当前: {page.url})", "err")
                 await browser.close()
                 _cleanup()
