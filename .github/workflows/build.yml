@@ -1,0 +1,100 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          python -m playwright install chromium
+
+      - name: Build EXE
+        shell: pwsh
+        run: |
+          $sitePkgs = python -c "import site; print(site.getsitepackages()[0])"
+          $playwrightDriver = Join-Path $sitePkgs "playwright\driver"
+          $playwrightStealth = Join-Path $sitePkgs "playwright_stealth"
+
+          # Find chromium browser path
+          $browsersDir = Join-Path $env:LOCALAPPDATA "ms-playwright"
+          $chromiumDir = Get-ChildItem -Path $browsersDir -Directory -Filter "chromium-*" | Sort-Object Name -Descending | Select-Object -First 1
+          $chromiumHeadless = Get-ChildItem -Path $browsersDir -Directory -Filter "chromium_headless_shell-*" | Sort-Object Name -Descending | Select-Object -First 1
+
+          $datas = @()
+          if (Test-Path $playwrightDriver) { $datas += "--add-data=$playwrightDriver;playwright/driver" }
+          if (Test-Path $playwrightStealth) { $datas += "--add-data=$playwrightStealth;playwright_stealth" }
+          if ($chromiumDir) { $datas += "--add-data=$($chromiumDir.FullName);ms-playwright/$($chromiumDir.Name)" }
+          if ($chromiumHeadless) { $datas += "--add-data=$($chromiumHeadless.FullName);ms-playwright/$($chromiumHeadless.Name)" }
+          if (Test-Path "mail_providers") { $datas += "--add-data=mail_providers;mail_providers" }
+
+          $cmd = @(
+            "python", "-m", "PyInstaller",
+            "--noconfirm",
+            "--name=KiroProManager",
+            "--windowed",
+            "--distpath=dist",
+            "--workpath=build_tmp",
+            "--hidden-import=curl_cffi",
+            "--hidden-import=curl_cffi.requests",
+            "--hidden-import=playwright",
+            "--hidden-import=playwright.async_api",
+            "--hidden-import=playwright_stealth",
+            "--hidden-import=cryptography",
+            "--hidden-import=cffi",
+            "--hidden-import=_cffi_backend",
+            "--hidden-import=tkinter",
+            "--hidden-import=tkinter.ttk",
+            "--hidden-import=tkinter.messagebox",
+            "--hidden-import=tkinter.filedialog",
+            "--hidden-import=json",
+            "--hidden-import=sqlite3",
+            "--hidden-import=concurrent.futures",
+            "--hidden-import=kiro_register",
+            "--hidden-import=kiro_subscribe",
+            "--hidden-import=kiro_login",
+            "--hidden-import=stripe_pay",
+            "--hidden-import=captcha_solver",
+            "--hidden-import=mail_providers",
+            "--hidden-import=mail_providers.base",
+            "--hidden-import=mail_providers.shiromail",
+            "--hidden-import=mail_providers.tempforward",
+            "--hidden-import=roxy_register",
+            "--collect-all=curl_cffi"
+          ) + $datas + @("main.py")
+
+          & $cmd[0] $cmd[1..($cmd.Length-1)]
+
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Create ZIP archive
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          Compress-Archive -Path "dist\KiroProManager\*" -DestinationPath "KiroProManager-${tag}-win64.zip"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: KiroProManager-*.zip
+          generate_release_notes: true
