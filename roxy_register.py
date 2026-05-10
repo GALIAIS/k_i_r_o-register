@@ -890,16 +890,30 @@ async def register_with_roxy(
                 log(f"检测到 {count} 个密码输入框", "dbg")
                 for attempt in range(3):
                     try:
-                        await _move_to_element(page, pwd_inputs.first)
-                        await _human_type(page, pwd_inputs.first, password, min_delay=30, max_delay=90)
-                        await _human_delay(0.5, 1.2)
-                        if count > 1:
-                            await _move_to_element(page, pwd_inputs.nth(1))
-                            await _human_type(page, pwd_inputs.nth(1), password, min_delay=30, max_delay=90)
-                            await _human_delay(0.5, 1.0)
+                        # 通过 JS 精准定位并填入密码，避免悬浮验证提示遮挡
+                        filled = await page.evaluate("""(pwd) => {
+                            const inputs = Array.from(document.querySelectorAll('input[type="password"]'))
+                                .filter(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+                            if (inputs.length === 0) return 0;
+                            function setVal(el, val) {
+                                const nativeSetter = Object.getOwnPropertyDescriptor(
+                                    window.HTMLInputElement.prototype, 'value').set;
+                                nativeSetter.call(el, val);
+                                el.dispatchEvent(new Event('input', {bubbles: true}));
+                                el.dispatchEvent(new Event('change', {bubbles: true}));
+                            }
+                            // 第一个：新密码
+                            setVal(inputs[0], pwd);
+                            // 第二个：确认密码
+                            if (inputs.length >= 2) {
+                                setVal(inputs[1], pwd);
+                            }
+                            return inputs.length;
+                        }""", password)
+                        log(f"JS 填入 {filled} 个密码框", "dbg")
+                        await _human_delay(0.5, 1.0)
                         submit_btn = page.locator('xpath=//form//button[@type="submit"]')
                         if await submit_btn.count() > 0 and await submit_btn.first.is_visible():
-                            await _move_to_element(page, submit_btn.first)
                             await submit_btn.first.click()
                         else:
                             await page.keyboard.press("Enter")
