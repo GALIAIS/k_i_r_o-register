@@ -3041,7 +3041,7 @@ class App(tk.Tk):
                         continue
 
                     # 跳过已知 Free 账号（仅根据本地已有字段判断，不发网络请求）
-                    sub = row.get("subscription", "") or ""
+                    sub = (row["subscription"] or "")
                     sub_lower = sub.lower()
                     if sub_lower and ("free" in sub_lower and "pro" not in sub_lower and "power" not in sub_lower):
                         display = format_subscription(sub)
