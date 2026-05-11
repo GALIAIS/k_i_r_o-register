@@ -989,8 +989,6 @@ class App(tk.Tk):
         self.notebook.pack(fill="both", expand=True, padx=15, pady=(0, 10))
 
         self._build_tab_accounts()
-        self._build_tab_usage()
-        self._build_tab_batch()
         self._build_tab_local()
         self._build_tab_register()
         self._build_tab_manual_login()
@@ -1028,6 +1026,14 @@ class App(tk.Tk):
                    command=self._copy_selected_json).pack(side="left", padx=5)
         ttk.Button(toolbar2, text="复制选中邮箱",
                    command=self._copy_selected_emails).pack(side="left", padx=5)
+        ttk.Button(toolbar2, text="查询选中额度",
+                   command=self._query_selected_usage).pack(side="left", padx=5)
+        ttk.Button(toolbar2, text="查询全部额度",
+                   command=self._query_all_usage).pack(side="left", padx=5)
+        ttk.Button(toolbar2, text="批量开启超额", style="Green.TButton",
+                   command=self._batch_enable_overage).pack(side="left", padx=5)
+        ttk.Button(toolbar2, text="注入选中到本地", style="Orange.TButton",
+                   command=self._inject_selected).pack(side="left", padx=5)
         self.lbl_sel_info = ttk.Label(toolbar2, text="", style="Stats.TLabel")
         self.lbl_sel_info.pack(side="right")
 
@@ -1133,130 +1139,7 @@ class App(tk.Tk):
 
         paned.add(bottom_frame, minsize=80)
 
-    # ─── Tab 2: 额度查询 ─────────────────────────────────────────────────
-    def _build_tab_usage(self):
-        tab = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(tab, text="  额度查询  ")
-
-        toolbar = ttk.Frame(tab)
-        toolbar.pack(fill="x", pady=(0, 8))
-
-        ttk.Button(toolbar, text="查询所有账号额度", style="Green.TButton",
-                   command=self._query_all_usage).pack(side="left", padx=(0, 5))
-        ttk.Button(toolbar, text="查询选中账号",
-                   command=self._query_selected_usage).pack(side="left", padx=5)
-        self.lbl_usage_stats = ttk.Label(toolbar, text="", style="Stats.TLabel")
-        self.lbl_usage_stats.pack(side="right")
-
-        self.usage_progress = ttk.Progressbar(tab, mode="determinate",
-                                              style="Horizontal.TProgressbar")
-        self.usage_progress.pack(fill="x", pady=(0, 8))
-
-        table_frame = ttk.Frame(tab)
-        table_frame.pack(fill="both", expand=True)
-
-        columns = ("id", "email", "provider", "subscription", "used", "limit", "overage_used",
-                   "overage_cap", "overage_cost", "overage_status")
-        self.usage_tree = ttk.Treeview(table_frame, columns=columns, show="headings",
-                                       selectmode="browse")
-        usage_col_cfg = [
-            ("id", "ID", 35), ("email", "邮箱", 170), ("provider", "登录方式", 65),
-            ("subscription", "订阅", 60), ("used", "已用额度", 70), ("limit", "总额度", 65),
-            ("overage_used", "超额已用", 70), ("overage_cap", "超额上限", 70),
-            ("overage_cost", "费用($)", 70), ("overage_status", "超额状态", 75),
-        ]
-        for cid, heading, width in usage_col_cfg:
-            self.usage_tree.heading(cid, text=heading)
-            self.usage_tree.column(cid, width=width, minwidth=35)
-
-        usage_scroll = ttk.Scrollbar(table_frame, orient="vertical",
-                                     command=self.usage_tree.yview)
-        self.usage_tree.configure(yscrollcommand=usage_scroll.set)
-        self.usage_tree.pack(side="left", fill="both", expand=True)
-        usage_scroll.pack(side="right", fill="y")
-
-        # Detail panel
-        ttk.Label(tab, text="详细信息", style="Stats.TLabel").pack(anchor="w", pady=(8, 2))
-        detail_frame = ttk.Frame(tab)
-        detail_frame.pack(fill="x")
-
-        self.usage_detail = tk.Text(detail_frame, bg="#0d1117", fg="#8b949e",
-                                    font=("Consolas", 9), insertbackground="#e0e0e0",
-                                    relief="flat", wrap="word", height=6)
-        detail_scroll = ttk.Scrollbar(detail_frame, orient="vertical",
-                                      command=self.usage_detail.yview)
-        self.usage_detail.configure(yscrollcommand=detail_scroll.set)
-        self.usage_detail.pack(side="left", fill="both", expand=True)
-        detail_scroll.pack(side="right", fill="y")
-
-        self.usage_detail.tag_configure("key", foreground="#00d2ff")
-        self.usage_detail.tag_configure("val", foreground="#e0e0e0")
-        self.usage_detail.tag_configure("warn", foreground="#f39c12")
-        self.usage_detail.tag_configure("ok", foreground="#2ecc71")
-
-        self.usage_tree.bind("<<TreeviewSelect>>", self._on_usage_select)
-
-    # ─── Tab 3: 批量操作 ─────────────────────────────────────────────────
-    def _build_tab_batch(self):
-        tab = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(tab, text="  批量操作  ")
-
-        toolbar = ttk.Frame(tab)
-        toolbar.pack(fill="x", pady=(0, 8))
-
-        ttk.Button(toolbar, text="批量开启超额", style="Green.TButton",
-                   command=self._batch_enable_overage).pack(side="left", padx=(0, 5))
-        ttk.Button(toolbar, text="注入选中账号到本地", style="Orange.TButton",
-                   command=self._inject_selected).pack(side="left", padx=5)
-
-        self.lbl_batch_stats = ttk.Label(toolbar, text="", style="Stats.TLabel")
-        self.lbl_batch_stats.pack(side="right")
-
-        self.batch_progress = ttk.Progressbar(tab, mode="determinate",
-                                              style="Horizontal.TProgressbar")
-        self.batch_progress.pack(fill="x", pady=(0, 8))
-
-        # Batch table
-        table_frame = ttk.Frame(tab)
-        table_frame.pack(fill="both", expand=True)
-
-        columns = ("id", "email", "provider", "operation", "result")
-        self.batch_tree = ttk.Treeview(table_frame, columns=columns, show="headings",
-                                       selectmode="extended")
-        batch_col_cfg = [
-            ("id", "ID", 35), ("email", "邮箱", 220), ("provider", "登录方式", 80),
-            ("operation", "操作", 120), ("result", "结果", 300),
-        ]
-        for cid, heading, width in batch_col_cfg:
-            self.batch_tree.heading(cid, text=heading)
-            self.batch_tree.column(cid, width=width, minwidth=35)
-
-        batch_scroll = ttk.Scrollbar(table_frame, orient="vertical",
-                                     command=self.batch_tree.yview)
-        self.batch_tree.configure(yscrollcommand=batch_scroll.set)
-        self.batch_tree.pack(side="left", fill="both", expand=True)
-        batch_scroll.pack(side="right", fill="y")
-
-        # Batch log
-        ttk.Label(tab, text="批量操作日志", style="Stats.TLabel").pack(anchor="w", pady=(8, 2))
-        blog_frame = ttk.Frame(tab)
-        blog_frame.pack(fill="x")
-
-        self.batch_log = tk.Text(blog_frame, bg="#0d1117", fg="#8b949e",
-                                 font=("Consolas", 9), insertbackground="#e0e0e0",
-                                 relief="flat", wrap="word", height=6)
-        blog_scroll = ttk.Scrollbar(blog_frame, orient="vertical",
-                                    command=self.batch_log.yview)
-        self.batch_log.configure(yscrollcommand=blog_scroll.set)
-        self.batch_log.pack(side="left", fill="both", expand=True)
-        blog_scroll.pack(side="right", fill="y")
-
-        self.batch_log.tag_configure("info", foreground="#58a6ff")
-        self.batch_log.tag_configure("success", foreground="#2ecc71")
-        self.batch_log.tag_configure("error", foreground="#f85149")
-        self.batch_log.tag_configure("warn", foreground="#f39c12")
-
-    # ─── Tab 4: 本地状态 ─────────────────────────────────────────────────
+    # ─── Tab 2: 本地状态 ───────────────────────────────────────────────
     def _build_tab_local(self):
         tab = ttk.Frame(self.notebook, padding=15)
         self.notebook.add(tab, text="  本地状态  ")
@@ -1287,7 +1170,7 @@ class App(tk.Tk):
         ttk.Label(path_frame, text=f"存储路径: {KIRO_CACHE_DIR}",
                   style="Stats.TLabel").pack(anchor="w")
 
-    # ─── Tab 5: 自动注册 ─────────────────────────────────────────────────
+    # ─── Tab 3: 自动注册 ─────────────────────────────────────────────────
     def _build_tab_register(self):
         tab = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(tab, text="  自动注册  ")
@@ -1447,7 +1330,7 @@ class App(tk.Tk):
         self._reg_running = False
         self._reg_cancel = False
 
-    # ─── Tab 5 Actions: 自动注册 ─────────────────────────────────────────
+    # ─── Tab 3 Actions: 自动注册 ─────────────────────────────────────────
     def _reg_log(self, msg, level="info"):
         """Thread-safe log to registration terminal via queue."""
         self._reg_queue.put((msg, level))
@@ -1980,7 +1863,7 @@ class App(tk.Tk):
         else:
             log(f"Pro 试用订阅未完成: {pay_result}", "err")
 
-    # ─── Tab 6: 手动登录 ─────────────────────────────────────────────────
+    # ─── Tab 4: 手动登录 ─────────────────────────────────────────────────
     def _build_tab_manual_login(self):
         tab = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(tab, text="  手动登录  ")
@@ -2039,7 +1922,7 @@ class App(tk.Tk):
         self._ml_running = False
         self._ml_cancel = False
 
-    # ─── Tab 6 Actions: 手动登录 ─────────────────────────────────────────
+    # ─── Tab 4 Actions: 手动登录 ─────────────────────────────────────────
     def _ml_log(self, msg, level="info"):
         self._ml_queue.put((msg, level))
 
@@ -2219,11 +2102,6 @@ class App(tk.Tk):
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_text.insert("end", f"[{ts}] {msg}\n", tag)
         self.log_text.see("end")
-
-    def _blog(self, msg, tag="info"):
-        ts = datetime.now().strftime("%H:%M:%S")
-        self.batch_log.insert("end", f"[{ts}] {msg}\n", tag)
-        self.batch_log.see("end")
 
     # ─── Data Loading ────────────────────────────────────────────────────
     def _load_accounts_from_db(self):
@@ -2528,8 +2406,14 @@ class App(tk.Tk):
             menu.add_command(label=f"复制选中 {len(sel)} 个邮箱", command=self._copy_selected_emails)
             menu.add_separator()
         menu.add_command(label="查看账号详情", command=lambda: self._show_account_detail(iid))
+        menu.add_command(label="查询此账号额度", command=lambda: self._query_single_usage(iid))
         menu.add_command(label="刷新此账号 Token", command=lambda: self._refresh_single_token(iid))
+        menu.add_command(label="注入此账号到本地", command=lambda: self._inject_single(iid))
         menu.add_separator()
+        if len(sel) > 1:
+            menu.add_command(label=f"查询选中 {len(sel)} 个额度", command=self._query_selected_usage)
+            menu.add_command(label=f"批量开启超额 ({len(sel)} 个)", command=self._batch_enable_overage)
+            menu.add_separator()
         menu.add_command(label="全选", command=self._select_all_accounts)
         menu.add_command(label="反选", command=self._invert_selection)
         menu.add_separator()
@@ -2819,7 +2703,7 @@ class App(tk.Tk):
             if desc:
                 self.models_text.insert("end", f"    {desc}\n", "dim")
 
-    # ─── Tab 2 Actions: 额度查询 ─────────────────────────────────────────
+    # ─── Usage & Batch Actions (merged into accounts tab) ─────────────────
     def _query_all_usage(self):
         if self.running:
             return
@@ -2828,11 +2712,9 @@ class App(tk.Tk):
             messagebox.showinfo("提示", "数据库中无账号")
             return
         self.running = True
-        self.usage_progress["value"] = 0
-        self.usage_progress["maximum"] = len(rows)
-
-        for item in self.usage_tree.get_children():
-            self.usage_tree.delete(item)
+        self.acc_progress["value"] = 0
+        self.acc_progress["maximum"] = len(rows)
+        self._log("开始查询所有账号额度...")
 
         def _do():
             total_used = 0
@@ -2843,14 +2725,12 @@ class App(tk.Tk):
                 row_id = row["id"]
                 email = row["email"] or ""
                 provider = row["provider"] or ""
+                iid = str(row_id)
 
                 access_token, err = get_valid_token(row, self.conn)
                 if not access_token:
-                    self.after(0, lambda rid=row_id, e=email, p=provider:
-                        self.usage_tree.insert("", "end", iid=str(rid), values=(
-                            rid, e, p, "-", "错误", "-", "-", "-", "-", "-"
-                        )))
-                    self.after(0, lambda v=i: self.usage_progress.configure(value=v))
+                    self.after(0, lambda i2=iid: self.acc_tree.set(i2, "usage", "Token错误"))
+                    self.after(0, lambda v=i: self.acc_progress.configure(value=v))
                     continue
 
                 profile_arn = row["profileArn"] or FIXED_PROFILE_ARNS.get(provider, "")
@@ -2858,11 +2738,8 @@ class App(tk.Tk):
                     profile_arn = list_profiles(access_token) or ""
 
                 if not profile_arn:
-                    self.after(0, lambda rid=row_id, e=email, p=provider:
-                        self.usage_tree.insert("", "end", iid=str(rid), values=(
-                            rid, e, p, "-", "无ARN", "-", "-", "-", "-", "-"
-                        )))
-                    self.after(0, lambda v=i: self.usage_progress.configure(value=v))
+                    self.after(0, lambda i2=iid: self.acc_tree.set(i2, "usage", "无ARN"))
+                    self.after(0, lambda v=i: self.acc_progress.configure(value=v))
                     continue
 
                 result = query_usage(access_token, profile_arn)
@@ -2890,131 +2767,175 @@ class App(tk.Tk):
                         "subscription": sub_raw,
                     })
 
-                    self.after(0, lambda rid=row_id, e=email, p=provider,
-                               u=used, l=limit, ou=ov_used, oc=ov_cap,
-                               ocost=ov_cost, os_=ov_status, sr=sub_raw:
-                        self.usage_tree.insert("", "end", iid=str(rid), values=(
-                            rid, e, p, format_subscription(sr), f"{u}/{l}", str(l),
-                            str(ou), str(oc), f"${ocost:.2f}", os_ or "未开启"
-                        )))
+                    usage_str = f"{used}/{limit}"
+                    self.after(0, lambda i2=iid, u=usage_str, o=ov_status or "未开启", s=sub_raw: (
+                        self.acc_tree.set(i2, "usage", u),
+                        self.acc_tree.set(i2, "overage", o),
+                        self.acc_tree.set(i2, "subscription", format_subscription(s)),
+                    ))
                 else:
-                    self.after(0, lambda rid=row_id, e=email, p=provider:
-                        self.usage_tree.insert("", "end", iid=str(rid), values=(
-                            rid, e, p, "-", "查询失败", "-", "-", "-", "-", "-"
-                        )))
+                    self.after(0, lambda i2=iid: self.acc_tree.set(i2, "usage", "查询失败"))
 
-                self.after(0, lambda v=i: self.usage_progress.configure(value=v))
+                self.after(0, lambda v=i: self.acc_progress.configure(value=v))
 
-            self.after(0, lambda: self.lbl_usage_stats.configure(
-                text=f"汇总: 已用 {total_used} | 总额度 {total_limit} | 超额费用 ${total_overage:.2f}"
-            ))
-            self.after(0, self._load_accounts_from_db)
+            msg = f"额度查询完成: 已用 {total_used} | 总额度 {total_limit} | 超额费用 ${total_overage:.2f}"
+            self.after(0, lambda: self._log(msg, "success"))
+            self.after(0, lambda: self.lbl_acc_stats.configure(
+                text=f"已用 {total_used}/{total_limit}  超额 ${total_overage:.2f}"))
             self.running = False
         threading.Thread(target=_do, daemon=True).start()
 
     def _query_selected_usage(self):
-        sel = self.usage_tree.selection() or self.acc_tree.selection()
+        sel = self.acc_tree.selection()
         if not sel:
-            messagebox.showwarning("提示", "请先选择一个账号")
+            messagebox.showwarning("提示", "请先选择账号")
             return
-        row_id = int(sel[0])
+        if self.running:
+            return
+        self.running = True
+        self.acc_progress["value"] = 0
+        self.acc_progress["maximum"] = len(sel)
+        self._log(f"正在查询 {len(sel)} 个账号的额度...")
+
+        def _do():
+            for i, iid in enumerate(sel, 1):
+                row_id = int(iid)
+                row = self.conn.execute("SELECT * FROM accounts WHERE id=?", (row_id,)).fetchone()
+                if not row:
+                    continue
+                access_token, err = get_valid_token(row, self.conn)
+                if not access_token:
+                    self.after(0, lambda i2=iid: self.acc_tree.set(i2, "usage", "Token错误"))
+                    self.after(0, lambda v=i: self.acc_progress.configure(value=v))
+                    continue
+
+                provider = row["provider"] or ""
+                profile_arn = row["profileArn"] or FIXED_PROFILE_ARNS.get(provider, "")
+                if not profile_arn:
+                    profile_arn = list_profiles(access_token) or ""
+                if not profile_arn:
+                    self.after(0, lambda i2=iid: self.acc_tree.set(i2, "usage", "无ARN"))
+                    self.after(0, lambda v=i: self.acc_progress.configure(value=v))
+                    continue
+
+                result = query_usage(access_token, profile_arn)
+                if result["ok"]:
+                    data = result["data"]
+                    bl = data.get("usageBreakdownList", [])
+                    b = bl[0] if bl else {}
+                    used = int(b.get("currentUsage", b.get("currentUsageWithPrecision", 0)))
+                    limit = int(b.get("usageLimit", b.get("usageLimitWithPrecision", 0)))
+                    ov_used = int(b.get("currentOverages", b.get("currentOveragesWithPrecision", 0)))
+                    ov_cap = int(b.get("overageCap", b.get("overageCapWithPrecision", 0)))
+                    ov_cost = float(b.get("overageCharges", 0))
+                    ov_status = data.get("overageConfiguration", {}).get("overageStatus", "")
+                    sub_info = data.get("subscriptionInfo", {})
+                    sub_raw = sub_info.get("subscriptionTitle", "") or sub_info.get("type", "") if sub_info else ""
+
+                    db_update_usage(self.conn, row_id, {
+                        "usageLimit": limit, "currentUsage": used,
+                        "overageCap": ov_cap, "currentOverages": ov_used,
+                        "overageStatus": ov_status, "overageCharges": ov_cost,
+                        "subscription": sub_raw,
+                    })
+
+                    usage_str = f"{used}/{limit}"
+                    self.after(0, lambda i2=iid, u=usage_str, o=ov_status or "未开启", s=sub_raw: (
+                        self.acc_tree.set(i2, "usage", u),
+                        self.acc_tree.set(i2, "overage", o),
+                        self.acc_tree.set(i2, "subscription", format_subscription(s)),
+                    ))
+                else:
+                    self.after(0, lambda i2=iid: self.acc_tree.set(i2, "usage", "查询失败"))
+
+                self.after(0, lambda v=i: self.acc_progress.configure(value=v))
+
+            self.after(0, lambda: self._log(f"额度查询完成 ({len(sel)} 个账号)", "success"))
+            self.running = False
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _query_single_usage(self, iid):
+        row_id = int(iid)
         row = self.conn.execute("SELECT * FROM accounts WHERE id=?", (row_id,)).fetchone()
         if not row:
             return
+        self._log(f"正在查询 {row['email']} 的额度...")
 
-        self.usage_detail.delete("1.0", "end")
-        access_token, err = get_valid_token(row, self.conn)
-        if not access_token:
-            self.usage_detail.insert("end", f"Token 获取失败: {err}\n", "warn")
-            return
+        def _do():
+            access_token, err = get_valid_token(row, self.conn)
+            if not access_token:
+                self.after(0, lambda: self._log(f"Token 获取失败: {err}", "error"))
+                return
 
-        profile_arn = row["profileArn"] or FIXED_PROFILE_ARNS.get(row["provider"] or "", "")
-        if not profile_arn:
-            profile_arn = list_profiles(access_token) or ""
-        if not profile_arn:
-            self.usage_detail.insert("end", "无法获取 profileArn\n", "warn")
-            return
+            provider = row["provider"] or ""
+            profile_arn = row["profileArn"] or FIXED_PROFILE_ARNS.get(provider, "")
+            if not profile_arn:
+                profile_arn = list_profiles(access_token) or ""
+            if not profile_arn:
+                self.after(0, lambda: self._log("无法获取 profileArn", "error"))
+                return
 
-        result = query_usage(access_token, profile_arn)
-        if result["ok"]:
-            self._display_usage_detail(result["data"], row["email"] or "")
-        else:
-            err_data = result.get("error", {})
-            msg = translate_api_error(err_data)
-            self.usage_detail.insert("end", f"查询失败: {msg}\n", "warn")
+            result = query_usage(access_token, profile_arn)
+            if result["ok"]:
+                data = result["data"]
+                bl = data.get("usageBreakdownList", [])
+                b = bl[0] if bl else {}
+                used = int(b.get("currentUsage", b.get("currentUsageWithPrecision", 0)))
+                limit = int(b.get("usageLimit", b.get("usageLimitWithPrecision", 0)))
+                ov_used = int(b.get("currentOverages", b.get("currentOveragesWithPrecision", 0)))
+                ov_cap = int(b.get("overageCap", b.get("overageCapWithPrecision", 0)))
+                ov_cost = float(b.get("overageCharges", 0))
+                ov_status = data.get("overageConfiguration", {}).get("overageStatus", "")
+                sub_info = data.get("subscriptionInfo", {})
+                sub_raw = sub_info.get("subscriptionTitle", "") or sub_info.get("type", "") if sub_info else ""
 
-    def _on_usage_select(self, event):
-        sel = self.usage_tree.selection()
-        if not sel:
-            return
-        row_id = int(sel[0])
-        row = self.conn.execute("SELECT * FROM accounts WHERE id=?", (row_id,)).fetchone()
-        if not row:
-            return
-        self.usage_detail.delete("1.0", "end")
-        self.usage_detail.insert("end", "  账号: ", "key")
-        self.usage_detail.insert("end", f"{row['email']}\n", "val")
-        self.usage_detail.insert("end", "  登录方式: ", "key")
-        self.usage_detail.insert("end", f"{row['provider']} / {row['authMethod']}\n", "val")
-        self.usage_detail.insert("end", "  基础额度: ", "key")
-        limit = row["usageLimit"] or 0
-        used = row["currentUsage"] or 0
-        pct = (used / limit * 100) if limit > 0 else 0
-        tag = "ok" if pct < 80 else "warn"
-        self.usage_detail.insert("end", f"{used}/{limit} ({pct:.1f}%)\n", tag)
-        self.usage_detail.insert("end", "  超额已用: ", "key")
-        self.usage_detail.insert("end", f"{row['currentOverages'] or 0}/{row['overageCap'] or 0}\n", "val")
-        self.usage_detail.insert("end", "  超额费用: ", "key")
-        self.usage_detail.insert("end", f"${row['overageCharges'] or 0:.2f}\n", "val")
-        self.usage_detail.insert("end", "  超额状态: ", "key")
-        self.usage_detail.insert("end", f"{row['overageStatus'] or '未开启'}\n", "val")
-        self.usage_detail.insert("end", "  上次查询: ", "key")
-        self.usage_detail.insert("end", f"{row['lastQueryTime'] or '从未'}\n", "val")
+                db_update_usage(self.conn, row_id, {
+                    "usageLimit": limit, "currentUsage": used,
+                    "overageCap": ov_cap, "currentOverages": ov_used,
+                    "overageStatus": ov_status, "overageCharges": ov_cost,
+                    "subscription": sub_raw,
+                })
 
-    def _display_usage_detail(self, data, email):
-        self.usage_detail.delete("1.0", "end")
-        self.usage_detail.insert("end", "  账号: ", "key")
-        self.usage_detail.insert("end", f"{email}\n\n", "val")
+                usage_str = f"{used}/{limit}"
+                pct = (used / limit * 100) if limit > 0 else 0
+                lines = [
+                    f"账号: {row['email']}",
+                    f"订阅: {format_subscription(sub_raw)}",
+                    f"基础额度: {used}/{limit} ({pct:.1f}%)",
+                    f"超额已用: {ov_used}/{ov_cap}",
+                    f"超额费用: ${ov_cost:.2f}",
+                    f"超额状态: {ov_status or '未开启'}",
+                ]
+                self.after(0, lambda i2=iid, u=usage_str, o=ov_status or "未开启", s=sub_raw: (
+                    self.acc_tree.set(i2, "usage", u),
+                    self.acc_tree.set(i2, "overage", o),
+                    self.acc_tree.set(i2, "subscription", format_subscription(s)),
+                ))
+                self.after(0, lambda m="\n".join(lines): messagebox.showinfo("额度详情", m))
+            else:
+                err_data = result.get("error", {})
+                msg = translate_api_error(err_data)
+                self.after(0, lambda: self._log(f"查询失败: {msg}", "error"))
+        threading.Thread(target=_do, daemon=True).start()
 
-        breakdown_list = data.get("usageBreakdownList", [])
-        if not breakdown_list:
-            self.usage_detail.insert("end", "  无用量数据\n", "warn")
-            return
-
-        for b in breakdown_list:
-            display = b.get("displayName", b.get("resourceType", "UNKNOWN"))
-            used = int(b.get("currentUsage", b.get("currentUsageWithPrecision", 0)))
-            limit = int(b.get("usageLimit", b.get("usageLimitWithPrecision", 0)))
-            ov_used = int(b.get("currentOverages", b.get("currentOveragesWithPrecision", 0)))
-            ov_cap = int(b.get("overageCap", b.get("overageCapWithPrecision", 0)))
-            ov_rate = b.get("overageRate", 0)
-            ov_charges = b.get("overageCharges", 0)
-            unit = b.get("unit", "")
-
-            self.usage_detail.insert("end", f"  [{display}]\n", "key")
-            pct = (used / limit * 100) if limit > 0 else 0
-            tag = "ok" if pct < 80 else "warn"
-            self.usage_detail.insert("end", f"    基础: {used}/{limit} ({pct:.1f}%)\n", tag)
-            self.usage_detail.insert("end", f"    超额: {ov_used}/{ov_cap}  ", "val")
-            self.usage_detail.insert("end", f"费率: ${ov_rate}/{unit.lower()}  ", "val")
-            self.usage_detail.insert("end", f"费用: ${ov_charges:.2f}\n", "val")
-
-    # ─── Tab 3 Actions: 批量操作 ─────────────────────────────────────────
+    # ─── Batch Actions (merged into accounts tab) ─────────────────────────
     def _batch_enable_overage(self):
         if self.running:
             return
-        rows = db_get_all(self.conn)
+        sel = self.acc_tree.selection()
+        rows_all = db_get_all(self.conn)
+        if sel:
+            sel_ids = {int(s) for s in sel}
+            rows = [r for r in rows_all if r["id"] in sel_ids]
+        else:
+            rows = rows_all
         if not rows:
-            messagebox.showinfo("提示", "数据库中无账号")
+            messagebox.showinfo("提示", "没有可操作的账号")
             return
         self.running = True
-        self.batch_progress["value"] = 0
-        self.batch_progress["maximum"] = len(rows)
-
-        for item in self.batch_tree.get_children():
-            self.batch_tree.delete(item)
-
-        self._blog(f"开始批量开启超额... (共 {len(rows)} 个账号)")
+        self.acc_progress["value"] = 0
+        self.acc_progress["maximum"] = len(rows)
+        self._log(f"开始批量开启超额... (共 {len(rows)} 个账号)")
 
         def _do():
             success = 0
@@ -3023,56 +2944,45 @@ class App(tk.Tk):
             try:
                 for i, row in enumerate(rows, 1):
                     if not self.running:
-                        self.after(0, lambda: self._blog("批量操作已停止", "warn"))
+                        self.after(0, lambda: self._log("批量操作已停止", "warn"))
                         break
                     row_id = row["id"]
                     email = row["email"] or ""
                     provider = row["provider"] or ""
+                    iid = str(row_id)
                     self.after(0, lambda idx=i, total=len(rows), e=email:
-                        self._blog(f"[{idx}/{total}] 处理: {e}", "info"))
+                        self._log(f"[{idx}/{total}] 处理: {e}"))
 
                     if row["overageStatus"] == "ENABLED":
-                        self.after(0, lambda rid=row_id, e=email, p=provider:
-                            self.batch_tree.insert("", "end", iid=str(rid), values=(
-                                rid, e, p, "开启超额", "已开启(跳过)"
-                            )))
+                        self.after(0, lambda i2=iid: self.acc_tree.set(i2, "overage", "已开启"))
                         skipped += 1
-                        self.after(0, lambda v=i: self.batch_progress.configure(value=v))
+                        self.after(0, lambda v=i: self.acc_progress.configure(value=v))
                         continue
 
-                    # 跳过已知 Free 账号（仅根据本地已有字段判断，不发网络请求）
                     sub = (row["subscription"] or "")
                     sub_lower = sub.lower()
                     if sub_lower and ("free" in sub_lower and "pro" not in sub_lower and "power" not in sub_lower):
-                        display = format_subscription(sub)
-                        self.after(0, lambda rid=row_id, e=email, p=provider, d=display:
-                            self.batch_tree.insert("", "end", iid=str(rid), values=(
-                                rid, e, p, "开启超额", f"{d}不支持(跳过)"
-                            )))
+                        self.after(0, lambda i2=iid: self.acc_tree.set(i2, "overage", "不支持"))
                         skipped += 1
-                        self.after(0, lambda v=i: self.batch_progress.configure(value=v))
+                        self.after(0, lambda v=i: self.acc_progress.configure(value=v))
                         continue
 
                     access_token, err = get_valid_token(row, self.conn)
                     if not access_token:
-                        self.after(0, lambda rid=row_id, e=email, p=provider, er=err:
-                            self.batch_tree.insert("", "end", iid=str(rid), values=(
-                                rid, e, p, "开启超额", f"Token错误: {er}"
-                            )))
+                        self.after(0, lambda i2=iid, e=email, er=err:
+                            self._log(f"{e}: Token错误 {er}", "error"))
+                        self.after(0, lambda i2=iid: self.acc_tree.set(i2, "overage", "Token错误"))
                         failed += 1
-                        self.after(0, lambda v=i: self.batch_progress.configure(value=v))
+                        self.after(0, lambda v=i: self.acc_progress.configure(value=v))
                         continue
 
                     profile_arn = row["profileArn"] or FIXED_PROFILE_ARNS.get(provider, "")
                     if not profile_arn:
                         profile_arn = list_profiles(access_token) or ""
                     if not profile_arn:
-                        self.after(0, lambda rid=row_id, e=email, p=provider:
-                            self.batch_tree.insert("", "end", iid=str(rid), values=(
-                                rid, e, p, "开启超额", "无法获取 ProfileArn"
-                            )))
+                        self.after(0, lambda i2=iid: self.acc_tree.set(i2, "overage", "无ARN"))
                         failed += 1
-                        self.after(0, lambda v=i: self.batch_progress.configure(value=v))
+                        self.after(0, lambda v=i: self.acc_progress.configure(value=v))
                         continue
 
                     result = enable_overage(access_token, profile_arn)
@@ -3082,42 +2992,32 @@ class App(tk.Tk):
                             "overageCap": row["overageCap"], "currentOverages": row["currentOverages"],
                             "overageStatus": "ENABLED", "overageCharges": row["overageCharges"],
                         })
-                        self.after(0, lambda rid=row_id, e=email, p=provider:
-                            self.batch_tree.insert("", "end", iid=str(rid), values=(
-                                rid, e, p, "开启超额", "成功"
-                            )))
+                        self.after(0, lambda i2=iid: self.acc_tree.set(i2, "overage", "ENABLED"))
                         success += 1
                     else:
                         err_data = result.get("error", {})
                         msg = translate_api_error(err_data)
-                        # Free 账号 API 返回 FEATURE_NOT_SUPPORTED 时标记为跳过
                         if "不支持" in msg or "FEATURE_NOT_SUPPORTED" in str(err_data):
-                            self.after(0, lambda rid=row_id, e=email, p=provider, m=msg:
-                                self.batch_tree.insert("", "end", iid=str(rid), values=(
-                                    rid, e, p, "开启超额", f"不支持(跳过): {m}"
-                                )))
+                            self.after(0, lambda i2=iid: self.acc_tree.set(i2, "overage", "不支持"))
                             skipped += 1
                         else:
-                            self.after(0, lambda rid=row_id, e=email, p=provider, m=msg:
-                                self.batch_tree.insert("", "end", iid=str(rid), values=(
-                                    rid, e, p, "开启超额", f"失败: {m}"
-                                )))
+                            self.after(0, lambda i2=iid, m=msg: self.acc_tree.set(i2, "overage", m[:10]))
+                            self.after(0, lambda e=email, m=msg: self._log(f"{e}: {m}", "error"))
                             failed += 1
 
-                    self.after(0, lambda v=i: self.batch_progress.configure(value=v))
+                    self.after(0, lambda v=i: self.acc_progress.configure(value=v))
 
                 msg = f"批量超额完成: 成功 {success}, 跳过 {skipped}, 失败 {failed}"
-                self.after(0, lambda: self._blog(msg, "success" if failed == 0 else "warn"))
-                self.after(0, lambda: self.lbl_batch_stats.configure(text=msg))
+                self.after(0, lambda: self._log(msg, "success" if failed == 0 else "warn"))
                 self.after(0, self._load_accounts_from_db)
             except Exception as exc:
-                self.after(0, lambda e=str(exc): self._blog(f"批量超额异常中断: {e}", "error"))
+                self.after(0, lambda e=str(exc): self._log(f"批量超额异常中断: {e}", "error"))
             finally:
                 self.running = False
         threading.Thread(target=_do, daemon=True).start()
 
     def _inject_selected(self):
-        sel = self.batch_tree.selection() or self.acc_tree.selection()
+        sel = self.acc_tree.selection()
         if not sel:
             messagebox.showwarning("提示", "请先选择要注入的账号")
             return
@@ -3126,20 +3026,35 @@ class App(tk.Tk):
         if not row:
             return
 
-        # Refresh token first if needed
         access_token, err = get_valid_token(row, self.conn)
         if access_token:
-            # Re-read row after potential token update
             row = self.conn.execute("SELECT * FROM accounts WHERE id=?", (row_id,)).fetchone()
 
         ok, msg = inject_account(row)
         if ok:
-            self._blog(f"{row['email']} - {msg}", "success")
+            self._log(f"{row['email']} - {msg}", "success")
             self._refresh_local_status()
         else:
-            self._blog(f"{row['email']} - {msg}", "error")
+            self._log(f"{row['email']} - {msg}", "error")
 
-    # ─── Tab 4 Actions: 本地状态 ─────────────────────────────────────────
+    def _inject_single(self, iid):
+        row_id = int(iid)
+        row = self.conn.execute("SELECT * FROM accounts WHERE id=?", (row_id,)).fetchone()
+        if not row:
+            return
+
+        access_token, err = get_valid_token(row, self.conn)
+        if access_token:
+            row = self.conn.execute("SELECT * FROM accounts WHERE id=?", (row_id,)).fetchone()
+
+        ok, msg = inject_account(row)
+        if ok:
+            self._log(f"{row['email']} - {msg}", "success")
+            self._refresh_local_status()
+        else:
+            self._log(f"{row['email']} - {msg}", "error")
+
+    # ─── Tab 2 Actions: 本地状态 ─────────────────────────────────────────
     def _refresh_local_status(self):
         self.status_text.delete("1.0", "end")
         token = get_local_token_status()
