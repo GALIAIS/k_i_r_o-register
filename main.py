@@ -1842,8 +1842,22 @@ class App(tk.Tk):
         payment_url = token_result["url"]
         log(f"支付 URL: {payment_url[:80]}...", "info")
 
-        # Step 3: 使用 EFunCard + Stripe 自动支付 (auto_pay 内部会检测是否 $0 试用)
-        log("打开支付页面，检测试用状态并自动填卡...", "info")
+        # Step 3: 预检查 — 打开 Stripe 页面判断是否 $0 试用
+        log("检测试用状态: 打开支付页面读取今日应付金额...", "info")
+        page_info = await kiro_subscribe.fetch_checkout_page_async(payment_url, log=log)
+        if page_info:
+            is_free = page_info.get("is_free_trial", False)
+            total_due = page_info.get("total_due_today", "unknown")
+            log(f"今日应付: {total_due}", "info")
+            if not is_free:
+                log(f"非 $0 试用 (今日应付: {total_due})，中止订阅，不消耗 CDK 卡", "err")
+                return
+            log("确认为 $0 免费试用，继续自动支付...", "ok")
+        else:
+            log("无法获取页面金额（可能链接已失效），中止", "err")
+            return
+
+        # Step 4: 使用 EFunCard + Stripe 自动支付
         captcha_cfg = {"yescaptcha_key": yescaptcha_key}
         pay_result = await auto_pay(
             payment_url, cdk_code, captcha_config=captcha_cfg, headless=True, log=log

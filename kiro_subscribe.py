@@ -264,6 +264,97 @@ def fetch_checkout_page(payment_url, log=print):
         return asyncio.run(_fetch())
 
 
+async def fetch_checkout_page_async(payment_url, log=print):
+    """fetch_checkout_page 的 async 版本，可直接 await"""
+    import asyncio
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        log("playwright 未安装，跳过页面元素获取", "warn")
+        return None
+
+    import re
+
+    log("获取支付页面元素...", "info")
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
+            page = await browser.new_page(
+                viewport={"width": 1280, "height": 900}, locale="en-US"
+            )
+            await page.goto(payment_url, timeout=60000, wait_until="domcontentloaded")
+            await asyncio.sleep(10)
+
+            elements = await page.evaluate("""() => {
+                const result = {prices: [], headers: [], buttons: [], inputs: []};
+                document.querySelectorAll('*').forEach(el => {
+                    const text = (el.innerText || el.textContent || '').trim();
+                    if (text && text.length < 200 && el.children.length === 0) {
+                        if (/\\$[\\d,.]+|free|trial|0\\.00|total|subtotal|per month|due today/i.test(text)) {
+                            result.prices.push({tag: el.tagName, text: text});
+                        }
+                    }
+                });
+                document.querySelectorAll('h1, h2, h3, h4').forEach(el => {
+                    const text = (el.innerText || '').trim();
+                    if (text) result.headers.push({tag: el.tagName, text: text});
+                });
+                return result;
+            }""")
+
+            await browser.close()
+
+            all_price_text = " ".join(item["text"] for item in elements.get("prices", []))
+            total_due = ""
+            is_free = False
+
+            for item in elements.get("prices", []):
+                txt = item["text"]
+                m = re.search(r'\$([\d,.]+)', txt)
+                if m and ("total" in txt.lower() or "due today" in txt.lower()):
+                    total_due = f"${m.group(1)}"
+                    if float(m.group(1).replace(",", "")) == 0:
+                        is_free = True
+                    break
+
+            if not total_due:
+                prices = elements.get("prices", [])
+                for i, item in enumerate(prices):
+                    txt = item["text"].lower()
+                    if "total" in txt or "due today" in txt:
+                        for pi in prices[i:]:
+                            m = re.search(r'\$([\d,.]+)', pi["text"])
+                            if m:
+                                total_due = f"${m.group(1)}"
+                                if float(m.group(1).replace(",", "")) == 0:
+                                    is_free = True
+                                break
+                        break
+
+            if not total_due:
+                if "$0.00" in all_price_text:
+                    is_free = True
+                    total_due = "$0.00"
+                else:
+                    m = re.search(r'\$([\d,.]+)', all_price_text)
+                    if m:
+                        total_due = f"${m.group(1)}"
+                        if float(m.group(1).replace(",", "")) == 0:
+                            is_free = True
+
+            log(f"  价格信息: {[item['text'] for item in elements['prices']]}", "dbg")
+            log(f"  今日应付: {total_due}", "info")
+            log(f"  是否 $0 试用: {is_free}", "info")
+
+            return {
+                "is_free_trial": is_free,
+                "total_due_today": total_due,
+                "elements": elements,
+            }
+    except Exception as e:
+        log(f"获取支付页面元素失败: {e}", "error")
+        return None
+
 def subscribe_pro(access_token, profile_arn=None, provider="BuilderId",
                   subscription_type=None, log=print):
     """
