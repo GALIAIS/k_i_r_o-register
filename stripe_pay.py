@@ -186,6 +186,7 @@ async def fill_stripe_checkout(payment_url, card_info, cdk_code, log=log, headle
             await asyncio.sleep(2)
 
             # 检查页面金额，非 $0 试用则中止
+            log("检测试用状态: 读取今日应付金额...", "info")
             amount_value = None
             try:
                 amount_text = await page.evaluate(r"""() => {
@@ -210,8 +211,8 @@ async def fill_stripe_checkout(payment_url, card_info, cdk_code, log=log, headle
                         log("今日应付 $0.00，确认为免费试用", "info")
                 else:
                     log("未检测到 Total due today 金额，继续...", "warn")
-            except Exception:
-                pass
+            except Exception as e:
+                log(f"金额检测异常: {e}", "warn")
 
             # 选择国家
             log("设置国家: United States")

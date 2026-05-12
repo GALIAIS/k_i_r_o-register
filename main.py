@@ -1842,7 +1842,8 @@ class App(tk.Tk):
         payment_url = token_result["url"]
         log(f"支付 URL: {payment_url[:80]}...", "info")
 
-        # Step 3: 使用 EFunCard + Stripe 自动支付
+        # Step 3: 使用 EFunCard + Stripe 自动支付 (auto_pay 内部会检测是否 $0 试用)
+        log("打开支付页面，检测试用状态并自动填卡...", "info")
         captcha_cfg = {"yescaptcha_key": yescaptcha_key}
         pay_result = await auto_pay(
             payment_url, cdk_code, captcha_config=captcha_cfg, headless=True, log=log
@@ -1863,8 +1864,11 @@ class App(tk.Tk):
                 self.after(0, self._load_accounts_from_db)
             except Exception:
                 pass
+        elif pay_result and pay_result.get("status") == "not_free_trial":
+            log(f"此账号无免费试用资格: {pay_result.get('message', '')}", "err")
         else:
-            log(f"Pro 试用订阅未完成: {pay_result}", "err")
+            reason = pay_result.get("message", str(pay_result)) if pay_result else "未知错误"
+            log(f"Pro 试用订阅未完成: {reason}", "err")
 
     # ─── Tab 4: 手动登录 ─────────────────────────────────────────────────
     def _build_tab_manual_login(self):
