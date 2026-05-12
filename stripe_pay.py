@@ -188,15 +188,13 @@ async def fill_stripe_checkout(payment_url, card_info, cdk_code, log=log, headle
             # 检查页面金额，非 $0 试用则中止
             amount_value = None
             try:
-                amount_text = await page.evaluate("""() => {
+                amount_text = await page.evaluate(r"""() => {
                     const body = document.body.innerText;
-                    // 找 "due today" / "Total due today" 旁边的金额
-                    const m = body.match(/(?:due today|total today|amount due|total)[^\\n$]*\\$([\\d,.]+)/i);
+                    // 找 "Total due today" 或 "due today" 后面紧跟的金额(下一行)
+                    const m = body.match(/(?:total due today|due today|amount due)\s*\n\s*\$([\d,.]+)/i);
                     if (m) return m[1];
-                    // 找 "$0.00" 模式
-                    if (/\\$0\\.00/.test(body)) return '0.00';
-                    // 找任意金额
-                    const m2 = body.match(/\\$([\\d,.]+)/);
+                    // 找 "total" 后面紧跟的金额
+                    const m2 = body.match(/\btotal\b\s*\n\s*\$([\d,.]+)/i);
                     if (m2) return m2[1];
                     return '';
                 }""")
@@ -208,8 +206,10 @@ async def fill_stripe_checkout(payment_url, card_info, cdk_code, log=log, headle
                         await browser.close()
                         return {"ok": False, "status": "not_free_trial",
                                 "message": f"今日应付 ${amount_text}，非免费试用"}
+                    else:
+                        log("今日应付 $0.00，确认为免费试用", "info")
                 else:
-                    log("未检测到金额信息，继续...", "warn")
+                    log("未检测到 Total due today 金额，继续...", "warn")
             except Exception:
                 pass
 
