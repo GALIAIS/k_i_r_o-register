@@ -236,12 +236,7 @@ def fetch_checkout_page(payment_url, log=print):
                             if float(m.group(1).replace(",", "")) == 0:
                                 is_free = True
 
-                log(f"  页面标题: {elements['headers'][0]['text'] if elements['headers'] else 'N/A'}", "dbg")
-                log(f"  价格信息: {[p['text'] for p in elements['prices']]}", "dbg")
                 log(f"  今日应付: {total_due}", "info")
-                log(f"  是否 $0 试用: {is_free}", "info")
-                log(f"  输入框: {len(elements['inputs'])} 个", "dbg")
-                log(f"  按钮: {[b['text'] for b in elements['buttons'] if b['text']]}", "dbg")
 
                 return {
                     "is_free_trial": is_free,
@@ -342,9 +337,7 @@ async def fetch_checkout_page_async(payment_url, log=print):
                         if float(m.group(1).replace(",", "")) == 0:
                             is_free = True
 
-            log(f"  价格信息: {[item['text'] for item in elements['prices']]}", "dbg")
             log(f"  今日应付: {total_due}", "info")
-            log(f"  是否 $0 试用: {is_free}", "info")
 
             return {
                 "is_free_trial": is_free,
