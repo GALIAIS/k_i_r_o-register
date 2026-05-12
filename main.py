@@ -1471,7 +1471,7 @@ class App(tk.Tk):
                     return "banned", "账号已被临时封禁 (TEMPORARILY_SUSPENDED)"
                 if usage.get("status") == 403:
                     return "banned", f"访问被拒绝 (HTTP 403)"
-            # 3) 检查是否有免费试用
+            # 3) 检查是否有免费试用 (API 预检)
             if pro_trial:
                 import kiro_subscribe
                 subs = kiro_subscribe.list_available_subscriptions(access_token, profile_arn, log=self._reg_log)
@@ -1487,9 +1487,12 @@ class App(tk.Tk):
                         pro_plan = plans[0]
                     if pro_plan:
                         pricing = pro_plan.get("pricing", {})
-                        amount = pricing.get("amount", -1)
-                        if amount is not None and float(amount) > 0:
-                            return "no_trial", f"该账号无免费试用 (价格: {amount} {pricing.get('currency', 'USD')})"
+                        amount = pricing.get("amount")
+                        # amount == 0 表示有试用; amount > 0 表示无试用; None/-1 表示未知(继续)
+                        if amount is not None and amount != -1 and float(amount) > 0:
+                            return "no_trial", f"该账号无免费试用 (今日应付: ${float(amount):.2f} {pricing.get('currency', 'USD')})"
+                        elif amount is not None and float(amount) == 0:
+                            self._reg_log(f"API 确认有 $0 试用资格", "ok")
             return "ok", ""
 
         def _do_import_and_subscribe(result, loop):

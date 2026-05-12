@@ -192,31 +192,49 @@ def fetch_checkout_page(payment_url, log=print):
 
                 await browser.close()
 
-                # 判断是否 $0 试用
+                # 判断是否 $0 试用: 从页面全文中提取 "due today" 金额
+                import re
                 all_price_text = " ".join(p["text"] for p in elements.get("prices", []))
                 total_due = ""
                 is_free = False
 
-                for i, p in enumerate(elements.get("prices", [])):
-                    txt = p["text"].lower()
-                    if "total" in txt or "due today" in txt:
-                        # 下一个或当前元素可能包含金额
-                        import re
-                        amounts = re.findall(r'\$[\d,.]+', all_price_text)
-                        # 找 "Total due today" 后面的金额
-                        for pi in elements["prices"][i:]:
-                            m = re.search(r'\$([\d,.]+)', pi["text"])
-                            if m:
-                                total_due = f"${m.group(1)}"
-                                if float(m.group(1).replace(",", "")) == 0:
-                                    is_free = True
-                                break
+                # 方法1: 在价格元素中找 "due today" / "total" 相关文本
+                for p in elements.get("prices", []):
+                    txt = p["text"]
+                    m = re.search(r'\$([\d,.]+)', txt)
+                    if m and ("total" in txt.lower() or "due today" in txt.lower()):
+                        total_due = f"${m.group(1)}"
+                        if float(m.group(1).replace(",", "")) == 0:
+                            is_free = True
+                        break
 
+                # 方法2: 找 "total"/"due today" 元素后紧跟的金额元素
                 if not total_due:
-                    # fallback: 检查是否有 $0.00
+                    prices = elements.get("prices", [])
+                    for i, p in enumerate(prices):
+                        txt = p["text"].lower()
+                        if "total" in txt or "due today" in txt:
+                            for pi in prices[i:]:
+                                m = re.search(r'\$([\d,.]+)', pi["text"])
+                                if m:
+                                    total_due = f"${m.group(1)}"
+                                    if float(m.group(1).replace(",", "")) == 0:
+                                        is_free = True
+                                    break
+                            break
+
+                # 方法3: fallback — 全文搜索 $0.00
+                if not total_due:
                     if "$0.00" in all_price_text:
                         is_free = True
                         total_due = "$0.00"
+                    else:
+                        # 找到任意金额作为 total_due
+                        m = re.search(r'\$([\d,.]+)', all_price_text)
+                        if m:
+                            total_due = f"${m.group(1)}"
+                            if float(m.group(1).replace(",", "")) == 0:
+                                is_free = True
 
                 log(f"  页面标题: {elements['headers'][0]['text'] if elements['headers'] else 'N/A'}", "dbg")
                 log(f"  价格信息: {[p['text'] for p in elements['prices']]}", "dbg")

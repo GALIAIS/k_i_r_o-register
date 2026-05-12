@@ -186,26 +186,30 @@ async def fill_stripe_checkout(payment_url, card_info, cdk_code, log=log, headle
             await asyncio.sleep(2)
 
             # 检查页面金额，非 $0 试用则中止
+            amount_value = None
             try:
                 amount_text = await page.evaluate("""() => {
                     const body = document.body.innerText;
-                    // 优先找 "due today" / "total" 旁边的金额
-                    const m = body.match(/(?:due today|total today|amount due)[^$\\n]*\\$([\\d,.]+)/i);
-                    if (m) return '$' + m[1];
-                    // 找 "total" 行
-                    const m2 = body.match(/total[^$\\n]*\\$([\\d,.]+)/i);
-                    if (m2) return '$' + m2[1];
-                    // 找 "$0.00" 模式（免费试用标志）
-                    if (/\\$0\\.00/.test(body)) return '$0.00';
-                    // 最后找任意金额
-                    const m3 = body.match(/\\$([\\d,.]+)/);
-                    if (m3) return '$' + m3[1];
+                    // 找 "due today" / "Total due today" 旁边的金额
+                    const m = body.match(/(?:due today|total today|amount due|total)[^\\n$]*\\$([\\d,.]+)/i);
+                    if (m) return m[1];
+                    // 找 "$0.00" 模式
+                    if (/\\$0\\.00/.test(body)) return '0.00';
+                    // 找任意金额
+                    const m2 = body.match(/\\$([\\d,.]+)/);
+                    if (m2) return m2[1];
                     return '';
                 }""")
                 if amount_text:
-                    log(f"页面金额: {amount_text}", "info")
+                    amount_value = float(amount_text.replace(",", ""))
+                    log(f"页面金额: ${amount_text} (今日应付)", "info")
+                    if amount_value > 0:
+                        log(f"非 $0 试用 (${amount_text})，中止支付", "error")
+                        await browser.close()
+                        return {"ok": False, "status": "not_free_trial",
+                                "message": f"今日应付 ${amount_text}，非免费试用"}
                 else:
-                    log("未检测到金额信息，继续...", "info")
+                    log("未检测到金额信息，继续...", "warn")
             except Exception:
                 pass
 
