@@ -1034,6 +1034,8 @@ class App(tk.Tk):
                    command=self._batch_enable_overage).pack(side="left", padx=5)
         ttk.Button(toolbar2, text="注入选中到本地", style="Orange.TButton",
                    command=self._inject_selected).pack(side="left", padx=5)
+        ttk.Button(toolbar2, text="总账号详情分析",
+                   command=self._show_account_analytics).pack(side="left", padx=5)
         self.lbl_sel_info = ttk.Label(toolbar2, text="", style="Stats.TLabel")
         self.lbl_sel_info.pack(side="right")
 
@@ -2725,6 +2727,254 @@ class App(tk.Tk):
                 self.models_text.insert("end", f"    {desc}\n", "dim")
 
     # ─── Usage & Batch Actions (merged into accounts tab) ─────────────────
+    def _show_account_analytics(self):
+        """打开账号总览分析窗口，统计 token / 订阅 / 用量 / 超额等多维度数据"""
+        rows = db_get_all(self.conn)
+        if not rows:
+            messagebox.showinfo("提示", "数据库中无账号")
+            return
+
+        win = tk.Toplevel(self)
+        win.title("总账号详情分析")
+        win.geometry("780x620")
+        win.configure(bg="#1a1a2e")
+
+        # 顶部标题
+        header = ttk.Frame(win, padding=(16, 12, 16, 8))
+        header.pack(fill="x")
+        ttk.Label(header, text="账号总览分析", style="Title.TLabel").pack(side="left")
+        ttk.Label(header, text=f"统计时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                  style="Stats.TLabel").pack(side="right")
+
+        # 统计内容
+        text = tk.Text(win, bg="#0d1117", fg="#e0e0e0",
+                       font=("Consolas", 10), insertbackground="#e0e0e0",
+                       relief="flat", wrap="word", padx=16, pady=12)
+        scrollbar = ttk.Scrollbar(win, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=scrollbar.set)
+        text.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=(0, 8))
+        scrollbar.pack(side="right", fill="y", pady=(0, 8))
+
+        text.tag_configure("h1", foreground="#00d2ff", font=("Consolas", 12, "bold"),
+                           spacing1=8, spacing3=4)
+        text.tag_configure("k", foreground="#8b949e")
+        text.tag_configure("v", foreground="#e0e0e0", font=("Consolas", 10, "bold"))
+        text.tag_configure("ok", foreground="#2ecc71", font=("Consolas", 10, "bold"))
+        text.tag_configure("warn", foreground="#f1c40f", font=("Consolas", 10, "bold"))
+        text.tag_configure("err", foreground="#e74c3c", font=("Consolas", 10, "bold"))
+        text.tag_configure("dim", foreground="#5d6675")
+        text.tag_configure("bar", foreground="#00d2ff")
+
+        total = len(rows)
+
+        # ── 1. 概览 ──
+        valid_count = sum(1 for r in rows if not is_token_expired(r["expiresAt"]))
+        expired_count = total - valid_count
+        text.insert("end", "总览\n", "h1")
+        text.insert("end", f"  总账号数:        ", "k")
+        text.insert("end", f"{total}\n", "v")
+        text.insert("end", f"  Token 有效:      ", "k")
+        text.insert("end", f"{valid_count}", "ok")
+        if total:
+            text.insert("end", f"  ({valid_count*100/total:.1f}%)\n", "dim")
+        else:
+            text.insert("end", "\n")
+        text.insert("end", f"  Token 已过期:    ", "k")
+        text.insert("end", f"{expired_count}", "err" if expired_count else "v")
+        if total:
+            text.insert("end", f"  ({expired_count*100/total:.1f}%)\n", "dim")
+        else:
+            text.insert("end", "\n")
+
+        # ── 2. 登录方式分布 ──
+        providers = {}
+        for r in rows:
+            p = r["provider"] or "未知"
+            providers[p] = providers.get(p, 0) + 1
+        text.insert("end", "\n登录方式分布\n", "h1")
+        for p, c in sorted(providers.items(), key=lambda x: -x[1]):
+            pct = c * 100 / total if total else 0
+            bar = "█" * int(pct / 4)
+            text.insert("end", f"  {p:<14}", "k")
+            text.insert("end", f"{c:>4}", "v")
+            text.insert("end", f"  ({pct:5.1f}%)  ", "dim")
+            text.insert("end", f"{bar}\n", "bar")
+
+        # ── 3. 订阅状态分布 ──
+        subs = {}
+        for r in rows:
+            s = format_subscription(r["subscription"])
+            subs[s] = subs.get(s, 0) + 1
+        text.insert("end", "\n订阅状态\n", "h1")
+        sub_order = ["Power", "Pro+", "Pro", "Free", "-"]
+        sorted_subs = sorted(subs.items(),
+                             key=lambda x: sub_order.index(x[0]) if x[0] in sub_order else 99)
+        for s, c in sorted_subs:
+            pct = c * 100 / total if total else 0
+            bar = "█" * int(pct / 4)
+            tag = "ok" if s in ("Pro", "Pro+", "Power") else ("warn" if s == "Free" else "dim")
+            text.insert("end", f"  {s:<14}", "k")
+            text.insert("end", f"{c:>4}", tag)
+            text.insert("end", f"  ({pct:5.1f}%)  ", "dim")
+            text.insert("end", f"{bar}\n", "bar")
+
+        # ── 4. 超额状态分布 ──
+        overage = {"已开启": 0, "未开启": 0, "其他": 0}
+        for r in rows:
+            o = (r["overageStatus"] or "").upper()
+            if "ACTIVE" in o or "ENABLED" in o or "ON" in o:
+                overage["已开启"] += 1
+            elif not o or o in ("DISABLED", "OFF"):
+                overage["未开启"] += 1
+            else:
+                overage["其他"] += 1
+        text.insert("end", "\n超额状态\n", "h1")
+        for s, c in overage.items():
+            pct = c * 100 / total if total else 0
+            bar = "█" * int(pct / 4)
+            tag = "ok" if s == "已开启" else ("dim" if s == "未开启" else "warn")
+            text.insert("end", f"  {s:<14}", "k")
+            text.insert("end", f"{c:>4}", tag)
+            text.insert("end", f"  ({pct:5.1f}%)  ", "dim")
+            text.insert("end", f"{bar}\n", "bar")
+
+        # ── 5. 用量分布 ──
+        usage_buckets = {"未查询": 0, "0%": 0, "0-50%": 0, "50-90%": 0, "90-100%": 0, "超额(100%+)": 0}
+        total_usage = 0
+        total_limit = 0
+        for r in rows:
+            limit = r["usageLimit"] or 0
+            cur = r["currentUsage"] or 0
+            total_usage += cur
+            total_limit += limit
+            if not limit:
+                usage_buckets["未查询"] += 1
+                continue
+            pct = cur * 100 / limit
+            if pct == 0:
+                usage_buckets["0%"] += 1
+            elif pct <= 50:
+                usage_buckets["0-50%"] += 1
+            elif pct <= 90:
+                usage_buckets["50-90%"] += 1
+            elif pct <= 100:
+                usage_buckets["90-100%"] += 1
+            else:
+                usage_buckets["超额(100%+)"] += 1
+        text.insert("end", "\n用量分布\n", "h1")
+        for s, c in usage_buckets.items():
+            pct = c * 100 / total if total else 0
+            bar = "█" * int(pct / 4)
+            tag = ("warn" if s in ("90-100%", "超额(100%+)") else
+                   ("ok" if s in ("0%", "0-50%") else "dim"))
+            text.insert("end", f"  {s:<14}", "k")
+            text.insert("end", f"{c:>4}", tag)
+            text.insert("end", f"  ({pct:5.1f}%)  ", "dim")
+            text.insert("end", f"{bar}\n", "bar")
+
+        # ── 6. 总用量统计 ──
+        text.insert("end", "\n用量汇总\n", "h1")
+        text.insert("end", f"  累计已用:        ", "k")
+        text.insert("end", f"{total_usage:,}\n", "v")
+        text.insert("end", f"  累计额度:        ", "k")
+        text.insert("end", f"{total_limit:,}\n", "v")
+        text.insert("end", f"  剩余额度:        ", "k")
+        remain = total_limit - total_usage
+        text.insert("end", f"{remain:,}", "ok" if remain > 0 else "warn")
+        if total_limit:
+            text.insert("end", f"  ({remain*100/total_limit:.1f}%)\n", "dim")
+        else:
+            text.insert("end", "\n")
+        text.insert("end", f"  整体使用率:      ", "k")
+        if total_limit:
+            usage_pct = total_usage * 100 / total_limit
+            tag = "err" if usage_pct >= 90 else ("warn" if usage_pct >= 50 else "ok")
+            text.insert("end", f"{usage_pct:.1f}%\n", tag)
+        else:
+            text.insert("end", "暂无数据\n", "dim")
+
+        # ── 7. 超额费用 ──
+        total_charges = sum(float(r["overageCharges"] or 0) for r in rows)
+        if total_charges > 0:
+            text.insert("end", "\n超额费用\n", "h1")
+            text.insert("end", f"  累计费用:        ", "k")
+            text.insert("end", f"${total_charges:.2f}\n", "warn")
+
+        # ── 8. Token 过期分布 ──
+        now = datetime.now()
+        expire_buckets = {"已过期": 0, "1小时内": 0, "1-24小时": 0, "1-7天": 0, "7天以上": 0, "无数据": 0}
+        for r in rows:
+            ea = r["expiresAt"]
+            if not ea:
+                expire_buckets["无数据"] += 1
+                continue
+            dt = None
+            for fmt in ("%Y-%m-%dT%H:%M:%S.000Z", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    dt = datetime.strptime(ea, fmt)
+                    break
+                except ValueError:
+                    continue
+            if not dt:
+                expire_buckets["无数据"] += 1
+                continue
+            delta = (dt - now).total_seconds()
+            if delta < 0:
+                expire_buckets["已过期"] += 1
+            elif delta < 3600:
+                expire_buckets["1小时内"] += 1
+            elif delta < 86400:
+                expire_buckets["1-24小时"] += 1
+            elif delta < 86400 * 7:
+                expire_buckets["1-7天"] += 1
+            else:
+                expire_buckets["7天以上"] += 1
+        text.insert("end", "\nToken 过期分布\n", "h1")
+        for s, c in expire_buckets.items():
+            pct = c * 100 / total if total else 0
+            bar = "█" * int(pct / 4)
+            tag = ("err" if s in ("已过期", "1小时内") else
+                   ("warn" if s == "1-24小时" else
+                    ("ok" if s == "7天以上" else "dim")))
+            text.insert("end", f"  {s:<14}", "k")
+            text.insert("end", f"{c:>4}", tag)
+            text.insert("end", f"  ({pct:5.1f}%)  ", "dim")
+            text.insert("end", f"{bar}\n", "bar")
+
+        # ── 9. 最近查询时间 ──
+        queried = [r for r in rows if r["lastQueryTime"]]
+        text.insert("end", "\n查询情况\n", "h1")
+        text.insert("end", f"  已查询账号:      ", "k")
+        text.insert("end", f"{len(queried)}/{total}\n", "v")
+        if queried:
+            latest = max(queried, key=lambda r: r["lastQueryTime"])
+            text.insert("end", f"  最近一次查询:    ", "k")
+            text.insert("end", f"{latest['lastQueryTime']}  ({latest['email']})\n", "v")
+
+        text.configure(state="disabled")
+
+        # 底部按钮
+        btn_frame = ttk.Frame(win, padding=(16, 4, 16, 12))
+        btn_frame.pack(fill="x")
+
+        def _refresh():
+            win.destroy()
+            self._show_account_analytics()
+
+        def _copy_report():
+            text.configure(state="normal")
+            content = text.get("1.0", "end")
+            text.configure(state="disabled")
+            self.clipboard_clear()
+            self.clipboard_append(content)
+            messagebox.showinfo("提示", "已复制到剪贴板", parent=win)
+
+        ttk.Button(btn_frame, text="刷新", command=_refresh).pack(side="left", padx=(0, 5))
+        ttk.Button(btn_frame, text="复制报告", command=_copy_report).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="关闭", style="Red.TButton",
+                   command=win.destroy).pack(side="right")
+
+    # ─── Usage & Batch Actions ─────────────────
     def _query_all_usage(self):
         if self.running:
             return
