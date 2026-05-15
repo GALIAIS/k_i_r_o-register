@@ -330,14 +330,35 @@ def db_update_token(conn, row_id, access_token, refresh_token, expires_at):
 # ─── API Layer ───────────────────────────────────────────────────────────────
 
 def http_post(url, body, headers=None):
+    """优先用 curl_cffi（带 chrome 指纹）访问 AWS 端点，失败时回退到 urllib。"""
     all_headers = {"Content-Type": "application/json"}
     if headers:
         all_headers.update(headers)
+    try:
+        from curl_cffi import requests as _creq
+        r = _creq.post(url, json=body, headers=all_headers,
+                       timeout=30, impersonate="chrome120", verify=True)
+        if 200 <= r.status_code < 300:
+            try:
+                return {"ok": True, "data": r.json(), "status": r.status_code}
+            except Exception:
+                return {"ok": True, "data": {}, "status": r.status_code}
+        try:
+            err_data = r.json()
+        except Exception:
+            err_data = {"raw": r.text[:500]}
+        return {"ok": False, "error": err_data, "status": r.status_code}
+    except ImportError:
+        pass
+    except Exception as e:
+        # curl_cffi 网络层异常时也回退到 urllib
+        last_err = e
+
     req = urllib.request.Request(
         url, data=json.dumps(body).encode(), headers=all_headers, method="POST"
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return {"ok": True, "data": json.loads(resp.read()), "status": resp.status}
     except urllib.error.HTTPError as e:
         error_body = e.read().decode()
@@ -351,12 +372,32 @@ def http_post(url, body, headers=None):
 
 
 def http_get(url, headers=None):
+    """优先用 curl_cffi 访问，失败时回退到 urllib。"""
     all_headers = {}
     if headers:
         all_headers.update(headers)
+    try:
+        from curl_cffi import requests as _creq
+        r = _creq.get(url, headers=all_headers, timeout=30,
+                      impersonate="chrome120", verify=True)
+        if 200 <= r.status_code < 300:
+            try:
+                return {"ok": True, "data": r.json(), "status": r.status_code}
+            except Exception:
+                return {"ok": True, "data": {}, "status": r.status_code}
+        try:
+            err_data = r.json()
+        except Exception:
+            err_data = {"raw": r.text[:500]}
+        return {"ok": False, "error": err_data, "status": r.status_code}
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
     req = urllib.request.Request(url, headers=all_headers, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return {"ok": True, "data": json.loads(resp.read()), "status": resp.status}
     except urllib.error.HTTPError as e:
         error_body = e.read().decode()
@@ -380,7 +421,7 @@ def refresh_social_token(refresh_token):
             "refreshToken": d["refreshToken"],
             "expiresIn": d.get("expiresIn", 3600),
         }
-    return None
+    return {"error": _format_refresh_error(result)}
 
 
 def refresh_idc_token(client_id, client_secret, refresh_token, region="us-east-1"):
@@ -400,7 +441,26 @@ def refresh_idc_token(client_id, client_secret, refresh_token, region="us-east-1
             "expiresIn": d.get("expiresIn", 3600),
             "idToken": d.get("idToken", ""),
         }
-    return None
+    return {"error": _format_refresh_error(result)}
+
+
+def _format_refresh_error(result):
+    """把 http_post 的错误结果转成可读的中文短描述"""
+    status = result.get("status", 0)
+    err = result.get("error") or {}
+    code = err.get("__type") or err.get("error") or err.get("code") or ""
+    msg = err.get("message") or err.get("error_description") or err.get("Message") or err.get("raw") or ""
+    if isinstance(msg, str):
+        msg = msg.strip()[:120]
+    if status == 0:
+        return f"网络异常: {msg or err.get('message', '')}"[:160]
+    if "InvalidGrant" in code:
+        return f"RT 已过期或被吊销 (HTTP {status})"
+    if "InvalidClient" in code or "UnauthorizedClient" in code:
+        return f"client 凭证失效 (HTTP {status})"
+    if status == 400 and not code:
+        return f"HTTP 400  {msg}"
+    return f"HTTP {status} {code} {msg}".strip()
 
 
 def decode_jwt_email(token):
@@ -571,10 +631,11 @@ def do_refresh_token(row):
     auth_method = row["authMethod"]
     if auth_method == "social":
         result = refresh_social_token(row["refreshToken"])
-        if result:
+        if result and result.get("accessToken"):
             expires_at = (datetime.now() + timedelta(seconds=result["expiresIn"])).strftime("%Y-%m-%d %H:%M:%S")
             return result["accessToken"], result["refreshToken"], expires_at, None
-        return None, None, None, "Social Token 刷新失败"
+        err = (result or {}).get("error") or "Social Token 刷新失败"
+        return None, None, None, err
     elif auth_method == "IdC":
         client_id = row["clientId"]
         client_secret = row["clientSecret"]
@@ -582,10 +643,11 @@ def do_refresh_token(row):
         if not client_id or not client_secret:
             return None, None, None, "缺少 clientId/clientSecret"
         result = refresh_idc_token(client_id, client_secret, row["refreshToken"], region)
-        if result:
+        if result and result.get("accessToken"):
             expires_at = (datetime.now() + timedelta(seconds=result["expiresIn"])).strftime("%Y-%m-%d %H:%M:%S")
             return result["accessToken"], result["refreshToken"], expires_at, None
-        return None, None, None, "IdC Token 刷新失败"
+        err = (result or {}).get("error") or "IdC Token 刷新失败"
+        return None, None, None, err
     return None, None, None, f"未知认证方式: {auth_method}"
 
 
